@@ -34,5 +34,4 @@ Some features:
 
 The new version of the DUMP1090 program read the BCM2835 serial number of the RPi and if needed, can compare for security reason this serial to the dump1090.bcm file in order to authorize (or not) the all process. 
 
-Read RPi-adsb-v6.doc for general information
-Read RPi-adsb-v6_Technical_Information.doc for technical information
+Read "RPi-adsb-v6.doc" for general information and "RPi-adsb-v6_Technical_Information.doc" for technical information
