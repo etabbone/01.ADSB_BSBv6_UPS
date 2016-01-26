@@ -62,7 +62,7 @@
     #include "winstubs.h" //Put everything Windows specific in here
     #include "rtl-sdr.h"
 #endif
-
+#include <wiringPi.h>
 // ============================= #defines ===============================
 
 #ifdef USER_LATITUDE
@@ -174,6 +174,13 @@
 #endif
 
 #define MODES_NOTUSED(V) ((void) V)
+#define OK_LED 16 // On-board Raspberry LED
+#define PIN_TRIGGER 	27 // (INÃ) DUO/CUBE
+#define PIN_TRIGGER_PB  9  // (IN) Push button PowerOFF
+#define PIN_TRIGGER_UPS 25 // (IN) Detect UPS
+// POWER OFF push button. Wait 3s before powering off the RPi
+#define STOPPB 3
+#define STOPPWR 15
 
 //======================== structure declarations =========================
 
@@ -286,6 +293,11 @@ struct {                             // Internal state
     int   metric;                    // Use metric units
     int   mlat;                      // Use Beast ascii format for raw data output, i.e. @...; iso *...;
     int   interactive_rtl1090;       // flight table in interactive mode is formatted like RTL1090
+    int	  trigger;		             // Trigger mode: GPIO interrupt + file (default 10s)
+    int   trigger_verbose;           // Trigger mode: output on screen + file
+    int   nocheck;
+    int   check;
+    int   ups;                       // UPS Mode
 
     // User details
     double fUserLat;                // Users receiver/antenna lat/lon needed for initial surface location
@@ -330,6 +342,15 @@ struct {                             // Internal state
     unsigned int stat_DF_Type_Corrected;
     unsigned int stat_ModeAC;
 } Modes;
+
+struct {
+	unsigned int active;
+	unsigned int first_reception;
+	FILE * pFile;
+	FILE * pFileUSB;
+	int set_reset_pb;
+	int set_reset;
+} interrupt;
 
 // The struct we use to store information about a decoded message.
 struct modesMessage {

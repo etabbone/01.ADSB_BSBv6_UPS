@@ -29,6 +29,112 @@
 //
 
 #include "dump1090.h"
+#include <wiringPi.h>
+#include <signal.h>
+
+static void signal_handler(int signo){
+       if (signo == SIGUSR1 ) {
+            printf( "Received STOP Signal\n" );
+            if (interrupt.active == 1) {
+                fclose(interrupt.pFile);
+                fclose(interrupt.pFileUSB);
+                if (Modes.trigger_verbose) printf("Closing file\n");
+            }
+            //system("halt");
+            exit(1);
+        }
+}
+
+void gpio_interrupt_both (void) { 
+	int fd;
+	int pinRead;
+	pinRead=digitalRead(PIN_TRIGGER);
+	if (Modes.trigger_verbose) printf("Receiving GPIO interrupt BOTH\nLevel %d\n",pinRead);
+	if ((interrupt.active==0) && (pinRead==1)){
+		time_t rawtime;
+		struct tm * timeinfo;
+		char buffer [80];
+		char bufferUSB [80];
+
+		time (&rawtime);
+		timeinfo = localtime (&rawtime);
+		strftime (buffer,80,"/logs/%Y%m%d_%H%M%S_Flights.txt",timeinfo);
+		strftime (bufferUSB,80,"/mnt/usb/logs//%Y%m%d_%H%M%S_Flights.txt",timeinfo);
+
+		interrupt.pFile = fopen(buffer,"a+"); // apend file (add text to a file or create a file if it does not exist.
+		interrupt.pFileUSB = fopen(bufferUSB,"a+"); // apend backup file
+
+		if ((fd = open ("/sys/class/leds/led0/trigger", O_RDWR)) > -1) {
+			write (fd, "none\n",5);
+			close (fd);
+			digitalWrite(OK_LED, LOW);
+		}
+		
+		if (Modes.trigger_verbose) printf("RISING\nOpening file: %80s\n",buffer);
+		
+		interrupt.active = 1 ;
+	}
+	if ((interrupt.active==1) && (pinRead==0)){
+		fclose(interrupt.pFile); 
+		fclose(interrupt.pFileUSB);
+		if ((fd = open ("/sys/class/leds/led0/trigger", O_RDWR)) > -1) {
+			write (fd, "none\n",5);
+			close (fd);
+			digitalWrite(OK_LED, HIGH);
+		}
+		
+		if (Modes.trigger_verbose) printf("FALLING\nClosing file\n");
+		interrupt.active = 0;
+		pinRead=0;
+	}
+}
+
+// POWER OFF push button interrupt detected
+void gpio_interrupt_PB_both (void) {
+        int pinRead_pb;
+        pinRead_pb=digitalRead(PIN_TRIGGER_PB);
+	// Push button active
+	if(!pinRead_pb && !interrupt.set_reset_pb){
+		interrupt.set_reset_pb=1;
+		// Wait 3s
+		sleep(STOPPB);
+		pinRead_pb=digitalRead(PIN_TRIGGER_PB);
+		// Still active ?
+		if(!pinRead_pb)	{
+			// Stop system
+			if (interrupt.active == 1) {
+				fclose(interrupt.pFile);
+				fclose(interrupt.pFileUSB);
+				if (Modes.trigger_verbose) printf("Closing file\n"); 
+			}
+			system("halt");
+		}
+		interrupt.set_reset_pb=0;
+	}
+}
+
+// UPS interrupt detected
+void gpio_interrupt_UPS_both (void) { 
+	int pinRead_ups;
+	pinRead_ups=digitalRead(PIN_TRIGGER_UPS);
+	// UPS active ?
+	if(pinRead_ups && !interrupt.set_reset){
+		interrupt.set_reset=1;
+		sleep(STOPPWR);
+		pinRead_ups=digitalRead(PIN_TRIGGER_UPS);
+		// UPS still active?
+		if(pinRead_ups){
+			// Stop system
+                        if (interrupt.active == 1) {
+				fclose(interrupt.pFile);
+				fclose(interrupt.pFileUSB);
+				if (Modes.trigger_verbose) printf("Closing file\n");
+			}
+			system("halt");
+		}
+		interrupt.set_reset=0;
+	}
+}
 
 //
 // ============================= Utility functions ==========================
@@ -60,6 +166,46 @@ void modesInitConfig(void) {
     Modes.interactive_display_ttl = MODES_INTERACTIVE_DISPLAY_TTL;
     Modes.fUserLat                = MODES_USER_LATITUDE_DFLT;
     Modes.fUserLon                = MODES_USER_LONGITUDE_DFLT;
+}
+
+//
+//=========================================================================
+//
+void bcm(void) { 
+	if (!Modes.nocheck){ 
+		FILE *f = fopen("/proc/cpuinfo", "r");
+		if (!f) {
+			printf("Fatal error reading BCM RPi\n");
+			exit(1);
+		}
+		char line[256];
+		char serial_string[17];
+		while (fgets(line, 256, f)) {
+			if (strncmp(line, "Serial", 6) == 0) {
+				strcpy(serial_string, strchr(line, ':') + 2);
+			}
+		}
+		FILE *fr = fopen ("/dump1090/dump1090.bcm", "rt");
+ 		if (!fr) {
+                        printf("Fatal error reading BCM file\n");
+                        exit(1);
+                }
+
+		char fline[17];
+		fgets(fline, 17, fr);
+		fclose(fr);
+                fclose(f);
+		if(Modes.check) { 
+	               	printf("BCM file:%s\n",fline);
+			printf("BCM RPi :%s\n",serial_string);
+			exit(0); 
+		}
+		
+		if (strncmp(serial_string,fline,16)!=0) { 
+			printf("BCM fatal error\n");
+			exit(1);
+		} 		
+	}
 }
 
 //
@@ -216,6 +362,58 @@ void modesInitRTLSDR(void) {
     rtlsdr_reset_buffer(Modes.dev);
     fprintf(stderr, "Gain reported by device: %.2f\n",
         rtlsdr_get_tuner_gain(Modes.dev)/10.0);
+	if( signal( SIGUSR1, signal_handler) == SIG_ERR ){
+        	printf(" Unable to create handler for SIGUSR1\n");
+        } else {
+                printf("Use:  pkill dump1090 --signal SIGUSR1 to close files and stop dump1090 program\n");
+        }
+	if ((Modes.trigger) || (Modes.ups)){
+               // GPIO init
+                wiringPiSetupGpio () ;
+	}	 
+	if (Modes.ups) {
+		printf("UPS Mode activated\n");
+		interrupt.set_reset=0;
+		pinRead_ups=digitalRead(PIN_TRIGGER_UPS);
+		// If UPS allready active, wait 15s and check again
+		if(pinRead_ups){
+			printf("Main power problem detected. Waiting 15s\n");
+			sleep(STOPPWR);
+			pinRead_ups=digitalRead(PIN_TRIGGER_UPS);
+			// If UPS still active, power off the RPi
+			if(pinRead_ups){
+				printf("Main power problem : can't start RPi\n");
+				printf("UPS Protection mode. Forcing POWER OFF\n");
+				system("halt");
+			}
+			printf("Main power now is OK. Starting...\n");
+		}
+		wiringPiISR(PIN_TRIGGER_UPS, INT_EDGE_BOTH, &gpio_interrupt_UPS_both);
+	}
+	if (Modes.trigger) {
+		printf("Trigger mode\n");
+		bcm();
+		if (Modes.trigger_verbose) printf("- Verbose mode\n");
+		printf("- Waiting for synchronisation...\n");
+            
+		// Trigger
+		pinMode (PIN_TRIGGER, INPUT) ; // 7 -> 4
+		pullUpDnControl (PIN_TRIGGER, PUD_DOWN) ;
+		// Blink (test GPIO)
+		
+		int fd;
+		if ((fd = open ("/sys/class/leds/led0/trigger", O_RDWR)) > -1) {
+			write (fd, "none\n",5);
+			close (fd);
+			digitalWrite(OK_LED, LOW);delay (150) ;digitalWrite(OK_LED, HIGH);
+		}
+		
+		// Set interrupt ON
+		interrupt.set_reset_pb=0;
+		wiringPiISR(PIN_TRIGGER, INT_EDGE_BOTH, &gpio_interrupt_both);
+		wiringPiISR(PIN_TRIGGER_PB, INT_EDGE_BOTH, &gpio_interrupt_PB_both);
+
+	}
 }
 //
 //=========================================================================
@@ -382,6 +580,9 @@ void showHelp(void) {
 "--debug <flags>          Debug mode (verbose), see README for details\n"
 "--quiet                  Disable output to stdout. Use for daemon applications\n"
 "--ppm <error>            Set receiver error in parts per million (default 0)\n"
+"--trigger                Trigger mode\n"
+"--trigger_verbose        Trigger mode: output on screen + file\n"
+"--ups                    UPS Mode\n"
 "--help                   Show this help\n"
 "\n"
 "Debug mode flags: d = Log frames decoded with errors\n"
@@ -485,6 +686,19 @@ int main(int argc, char **argv) {
             Modes.nfix_crc = MODES_MAX_BITERRORS;
         } else if (!strcmp(argv[j],"--interactive")) {
             Modes.interactive = 1;
+		} else if (!strcmp(argv[j],"--trigger")) {
+            Modes.interactive = 1;  // Force interactive mode
+            Modes.trigger = 1; // Force trigger mode
+        } else if (!strcmp(argv[j],"--trigger_verbose")) {
+		    Modes.interactive = 1;  // Force interactive mode
+            Modes.trigger = 1; // Force trigger mode
+            Modes.trigger_verbose = 1; // file + screen output
+		} else if (!strcmp(argv[j],"--nocheck")) {
+            Modes.nocheck = 1;  
+		} else if (!strcmp(argv[j],"--check")) {
+            Modes.check = 1;  
+        } else if (!strcmp(argv[j],"--ups")) {
+            Modes.ups = 1;
         } else if (!strcmp(argv[j],"--interactive-rows") && more) {
             Modes.interactive_rows = atoi(argv[++j]);
         } else if (!strcmp(argv[j],"--interactive-ttl") && more) {

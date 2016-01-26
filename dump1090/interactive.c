@@ -29,6 +29,7 @@
 //
 
 #include "dump1090.h"
+#include <wiringPi.h>
 //
 // ============================= Utility functions ==========================
 //
@@ -338,7 +339,7 @@ void interactiveShowData(void) {
     interactiveUpdateAircraftModeS();
 
     progress = spinner[time(NULL)%4];
-
+if (Modes.trigger == 0) {
 #ifndef _WIN32
     printf("\x1b[H\x1b[2J");    // Clear the screen
 #else
@@ -354,7 +355,7 @@ void interactiveShowData(void) {
     }
     printf(
 "-------------------------------------------------------------------------------\n");
-
+} 
     while(a && (count < Modes.interactive_rows)) {
 
         if ((now - a->seen) < Modes.interactive_display_ttl)
@@ -425,9 +426,46 @@ void interactiveShowData(void) {
                         snprintf(strFl, 6, "%5d", altitude);
                     }
 					
+				if (Modes.trigger == 0) { // Normal mode
                     printf("%06x  %-4s  %-4s  %-8s %5s  %3s  %3s  %7s %8s  %3d %5d   %2d\n",
                     a->addr, strMode, strSquawk, a->flight, strFl, strGs, strTt,
                     strLat, strLon, signalAverage, msgs, (int)(now - a->seen));
+					} else { // Trigger mode
+						if (interrupt.first_reception == 0) {
+							
+							int fd;
+							if ((fd = open ("/sys/class/leds/led0/trigger", O_RDWR)) > -1) {
+								write (fd, "none\n",5);
+								close (fd);
+								digitalWrite(OK_LED, LOW);delay(150);digitalWrite(OK_LED, HIGH);delay(150);
+								digitalWrite(OK_LED, LOW);delay(150);digitalWrite(OK_LED, HIGH);
+							}
+							
+							interrupt.first_reception = 1;
+							if (Modes.trigger_verbose) {
+								printf("Hex    Flight   Alt   Spd Hdg Lat        Long        Date       Time\n");
+								printf("------------------------------------------------------------------------\n");
+							}
+						}
+						time_t rawtime;
+						struct tm * timeinfo;
+						char flight_date [80];
+						
+						time (&rawtime);
+						timeinfo = localtime (&rawtime);
+						strftime (flight_date,80,"%Y/%m/%d;%H:%M:%S",timeinfo);		
+						if (Modes.trigger_verbose) printf("%06x;%-8s;%5s;%3s;%3s;%10s;%11s;%19s\n",
+									a->addr, a->flight, strFl, strGs, strTt,
+									strLat, strLon, flight_date);
+							if (interrupt.active) { // Signal on GPIO
+								fprintf(interrupt.pFile,"%06x;%-8s;%5s;%3s;%3s;%10s;%11s;%19s\n",
+									a->addr, a->flight, strFl, strGs, strTt,
+									strLat, strLon, flight_date); // write record 
+								fprintf(interrupt.pFileUSB,"%06x;%-8s;%5s;%3s;%3s;%10s;%11s;%19s\n",
+ 									a->addr, a->flight, strFl, strGs, strTt, 
+									strLat, strLon, flight_date); // write backup record
+							}						
+					}
                 }
                 count++;
             }
