@@ -1,5 +1,5 @@
 # 01.ADSB_BSBv6_UPS
-Raspberry Pi (RPi) embedded ADS-B decoding system with UPS linked to a professional Noise Monitoring Station
+**Raspberry Pi (RPi) embedded ADS-B decoding system with UPS linked to a professional Noise Monitoring Station**
 
 **What is it?**
 
@@ -36,7 +36,7 @@ Some LEDs for displaying basics informations. A RTC chip provide a real date and
 
 The new version of the DUMP1090 program read the BCM2835 serial number of the RPi and if needed, can compare for security reason this serial to the dump1090.bcm file in order to authorize (or not) the all process. 
 
-Read "RPi-adsb-v6.doc" for general information and "RPi-adsb-v6_Technical_Information.doc" for technical information
+*Read "<b>[RPi-adsb-v6](https://github.com/etabbone/01.ADSB_BSBv6_UPS/blob/master/RPi-adsb-v6.doc)</b>" for general information and "<b>[RPi-adsb-v6_Technical_Information](https://github.com/etabbone/01.ADSB_BSBv6_UPS/blob/master/RPi-adsb-v6_Technical_Information.doc)</b>" for technical information.*
 
 **Hardware connections**
 
